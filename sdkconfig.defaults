@@ -1,0 +1,39 @@
+# LLDPocket sdkconfig defaults
+# Target: ESP32 with LAN8720 RMII Ethernet
+
+# Ethernet — ESP32 internal EMAC with RMII
+# Clock configuration is set at runtime based on module type (WROOM vs WROVER).
+# WROOM: ESP32 outputs 50 MHz on GPIO 17 → PHY REF_CLK
+# WROVER: GPIO 17 is internal to PSRAM; PHY crystal → GPIO 0 → ESP32
+# We default to CLK_OUTPUT for sdkconfig, but override in code for WROVER.
+CONFIG_ETH_USE_ESP32_EMAC=y
+CONFIG_ETH_PHY_INTERFACE_RMII=y
+CONFIG_ETH_RMII_CLK_OUTPUT=y
+CONFIG_ETH_RMII_CLK_OUT_GPIO=17
+
+# PSRAM detection — probe for WROVER module at boot
+# WROOM: no PSRAM, init fails silently (IGNORE_NOTFOUND)
+# WROVER: PSRAM detected, esp_psram_is_initialized() returns true
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y
+
+# Partition table
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Log level — INFO for normal operation, DEBUG for development
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_DEFAULT_LEVEL=3
+
+# FreeRTOS tick rate
+CONFIG_FREERTOS_HZ=1000
+
+# Main task stack size (we do protocol parsing on main task context)
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# Event loop
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
+
+# LVGL fonts — enable monospace UNSCII fonts for terminal UI
+CONFIG_LV_FONT_UNSCII_8=y
+CONFIG_LV_FONT_UNSCII_16=y
