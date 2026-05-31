@@ -418,8 +418,7 @@ void lvgl_ui_show_data(const link_info_t *link)
     set_row(s_val_dns2,  "DNS",     conn ? test_status_str(conn->dns)     : "--");
     set_row(s_val_wan,   "WAN",     conn ? test_status_str(conn->http)    : "--");
 
-    const char *eapol = eapol_get_status();
-    set_row(s_val_8021x, "802.1X", eapol ? eapol : (eapol_detected() ? "Detected" : "--"));
+    set_row(s_val_8021x, "802.1X", eapol_get_status());
 
     const char *desc = NULL;
     if (lldp && lldp->system_desc[0]) desc = lldp->system_desc;

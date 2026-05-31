@@ -177,6 +177,10 @@ static void connectivity_task(void *arg)
 {
     conn_task_params_t *params = (conn_task_params_t *)arg;
 
+    // Brief settling delay: ARP for the gateway hasn't been resolved yet when
+    // IP_EVENT_ETH_GOT_IP fires, and a 2s ping timeout can lose the race.
+    vTaskDelay(pdMS_TO_TICKS(1500));
+
     // Test 1: Ping gateway
     s_results.ping_gw = TEST_RUNNING;
     s_results.ping_gw = test_ping_gw(&params->gateway, params->netif);
