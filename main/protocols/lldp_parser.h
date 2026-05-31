@@ -73,3 +73,9 @@ void lldp_parse(const uint8_t *data, uint32_t length);
  * Returns NULL if no LLDP frame has been received yet.
  */
 const lldp_info_t *lldp_get_info(void);
+
+#include "config.h"
+#if FEATURE_DEMO_MODE
+/** Inject fake LLDP info for demo / UI iteration. */
+void lldp_info_set_demo(void);
+#endif

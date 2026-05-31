@@ -320,3 +320,29 @@ const lldp_info_t *lldp_get_info(void)
 {
     return s_lldp_info.received ? &s_lldp_info : NULL;
 }
+
+#if FEATURE_DEMO_MODE
+void lldp_info_set_demo(void)
+{
+    memset(&s_lldp_info, 0, sizeof(s_lldp_info));
+    strcpy(s_lldp_info.system_name, "sw-core-01.lab");
+    strcpy(s_lldp_info.system_desc, "Catalyst 9300-48P (demo)");
+    strcpy(s_lldp_info.port_id,   "Gi1/0/24");
+    strcpy(s_lldp_info.port_desc, "Uplink to access");
+    s_lldp_info.ttl = 120;
+    s_lldp_info.has_vlan = true;
+    s_lldp_info.port_vlan_id = 100;
+    s_lldp_info.has_vlan_name = true;
+    strcpy(s_lldp_info.vlan_name, "CORP-DATA");
+    s_lldp_info.has_mgmt_addr = true;
+    s_lldp_info.mgmt_addr_subtype = 1;  // IPv4
+    s_lldp_info.mgmt_addr_len = 4;
+    s_lldp_info.mgmt_addr[0] = 10;
+    s_lldp_info.mgmt_addr[1] = 0;
+    s_lldp_info.mgmt_addr[2] = 0;
+    s_lldp_info.mgmt_addr[3] = 1;
+    s_lldp_info.has_poe = true;
+    s_lldp_info.poe_mdi_power_support = 0x06;  // supported + enabled
+    s_lldp_info.received = true;
+}
+#endif

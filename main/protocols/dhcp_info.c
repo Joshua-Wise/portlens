@@ -42,3 +42,15 @@ void dhcp_info_reset(void)
     memset(&s_dhcp_info, 0, sizeof(s_dhcp_info));
     ESP_LOGI(TAG, "DHCP info reset");
 }
+
+#if FEATURE_DEMO_MODE
+void dhcp_info_set_demo(void)
+{
+    memset(&s_dhcp_info, 0, sizeof(s_dhcp_info));
+    strcpy(s_dhcp_info.ip,      "10.0.0.147");
+    strcpy(s_dhcp_info.netmask, "255.255.255.0");
+    strcpy(s_dhcp_info.gateway, "10.0.0.1");
+    strcpy(s_dhcp_info.dns,     "10.0.0.1");
+    s_dhcp_info.valid = true;
+}
+#endif

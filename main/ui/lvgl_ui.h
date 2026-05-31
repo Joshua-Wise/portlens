@@ -4,28 +4,31 @@
 
 #if FEATURE_DISPLAY
 
+#include <stdbool.h>
 #include "esp_err.h"
-#include "ui/screens.h"
+
+typedef struct {
+    bool link_up;
+    bool is_100m;
+    bool full_duplex;
+} link_info_t;
 
 /**
- * Initialize TFT hardware, LVGL, touch input, and create UI objects.
+ * Initialize TFT hardware, LVGL port, and create the static UI tree.
  * Starts the LVGL tick/render task internally.
  */
 esp_err_t lvgl_ui_init(void);
 
-/** Show boot splash screen. */
+/** Show the boot splash ("PortLens" + portlens.dev). */
 void lvgl_ui_show_splash(void);
 
-/** Show "waiting for Ethernet link" screen. */
+/** Show "Waiting for link..." — no Ethernet cable connected. */
 void lvgl_ui_show_waiting_link(void);
 
-/** Show "scanning for LLDP/CDP" screen with link info. */
+/** Show "Parsing..." — link is up but no LLDP/CDP/DHCP yet. */
 void lvgl_ui_show_scanning(const link_info_t *link);
 
-/** Show one of the 4 data screens. */
-void lvgl_ui_show_screen(screen_id_t id, const link_info_t *link);
-
-/** Get current screen (may change via touch gesture). */
-screen_id_t lvgl_ui_get_current_screen(void);
+/** Show the full data list using whatever protocol/DHCP data is available. */
+void lvgl_ui_show_data(const link_info_t *link);
 
 #endif // FEATURE_DISPLAY

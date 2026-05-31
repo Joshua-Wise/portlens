@@ -27,3 +27,9 @@ const dhcp_info_t *dhcp_info_get(void);
  * Reset DHCP info (call on link down).
  */
 void dhcp_info_reset(void);
+
+#include "config.h"
+#if FEATURE_DEMO_MODE
+/** Inject fake DHCP info for demo / UI iteration. */
+void dhcp_info_set_demo(void);
+#endif
