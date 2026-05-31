@@ -25,8 +25,6 @@ static const char *TAG = "lvgl_ui";
 #define COL_LABEL       lv_color_hex(0xC8D1DA)
 #define COL_VALUE       lv_color_hex(0xFFFFFF)
 #define COL_ACCENT      lv_color_hex(0x86EFAC)  // light green — PortLens brand
-#define COL_PASS        lv_color_hex(0x3FB950)
-#define COL_WARN        lv_color_hex(0x7DD3FC)  // light blue — Starting
 #define COL_FAIL        lv_color_hex(0xFCA5A5)  // light red — Disconnected
 
 // ---- Layout -----------------------------------------------------------------
@@ -35,9 +33,6 @@ static const char *TAG = "lvgl_ui";
 #define SIDE_PAD         4
 #define OVL_LINE_H      22
 #define OVL_BRAND_Y      6
-#define OVL_L1_Y        30
-#define OVL_L2_Y        52
-#define OVL_L3_Y        74
 #define OVL_SUB_Y      104
 
 // ---- Static UI handles ------------------------------------------------------
@@ -284,11 +279,6 @@ void lvgl_ui_show_waiting_link(void)
     lvgl_port_lock(0);
     if (s_scr_waiting) lv_screen_load(s_scr_waiting);
     lvgl_port_unlock();
-}
-
-void lvgl_ui_show_scanning(const link_info_t *link)
-{
-    lvgl_ui_show_waiting_link();
 }
 
 void lvgl_ui_show_data(const link_info_t *link)

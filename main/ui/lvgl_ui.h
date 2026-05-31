@@ -25,9 +25,6 @@ void lvgl_ui_show_splash(void);
 /** Show "Waiting for link..." — no Ethernet cable connected. */
 void lvgl_ui_show_waiting_link(void);
 
-/** Show "Parsing..." — link is up but no LLDP/CDP/DHCP yet. */
-void lvgl_ui_show_scanning(const link_info_t *link);
-
 /** Show the full data list using whatever protocol/DHCP data is available. */
 void lvgl_ui_show_data(const link_info_t *link);
 

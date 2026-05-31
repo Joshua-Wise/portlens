@@ -168,7 +168,6 @@ esp_err_t tft_init(tft_handles_t *out)
 
     // Use the ST7789 panel driver for its LVGL-compatible draw/flush callbacks.
     // CASET/RASET/RAMWR commands are identical between ST7735 and ST7789.
-    // We pass skip_init_device=true so the driver doesn't overwrite our init.
     esp_lcd_panel_dev_config_t panel_cfg = {
         .reset_gpio_num = -1,   // reset already done above
         .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR,
