@@ -7,6 +7,8 @@
 #include "protocols/lldp_parser.h"
 #include "protocols/cdp_parser.h"
 #include "protocols/dhcp_info.h"
+#include "protocols/eapol_detect.h"
+#include "tests/connectivity.h"
 
 #include "lvgl.h"
 #include "esp_lvgl_port.h"
@@ -43,6 +45,7 @@ static const char *TAG = "lvgl_ui";
 static lv_obj_t *s_scr_splash  = NULL;
 static lv_obj_t *s_scr_waiting = NULL;
 static lv_obj_t *s_scr_data    = NULL;
+static lv_obj_t *s_scr_data2   = NULL;
 
 // Data row value labels (children of s_scr_data)
 static lv_obj_t *s_val_switch = NULL;
@@ -54,6 +57,16 @@ static lv_obj_t *s_val_ip     = NULL;
 static lv_obj_t *s_val_gw     = NULL;
 static lv_obj_t *s_val_dns    = NULL;
 static lv_obj_t *s_val_dhcp   = NULL;
+
+// Page 2 — connectivity test results
+static lv_obj_t *s_val_ping   = NULL;
+static lv_obj_t *s_val_dns2   = NULL;
+static lv_obj_t *s_val_wan    = NULL;
+static lv_obj_t *s_val_8021x  = NULL;
+static lv_obj_t *s_val_desc   = NULL;
+
+// Auto-cycle timer (NULL = not running)
+static lv_timer_t *s_page_timer = NULL;
 
 // ---- Helpers ----------------------------------------------------------------
 
@@ -97,6 +110,79 @@ static lv_obj_t *add_row(lv_obj_t *parent, const char *label_text)
     snprintf(buf, sizeof(buf), "%s: --", label_text);
     lv_label_set_text(label, buf);
     return label;
+}
+
+// Build the common header bar used by both data screens.
+// page is 1-based; passing 0 omits the page indicator.
+static lv_obj_t *make_data_header(lv_obj_t *scr, int page)
+{
+    lv_obj_t *header = lv_obj_create(scr);
+    lv_obj_set_size(header, TFT_H_RES, HEADER_H);
+    lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(header, 0, 0);
+    lv_obj_set_style_pad_all(header, 0, 0);
+    lv_obj_align(header, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_remove_flag(header, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t *title = lv_label_create(header);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(title, COL_ACCENT, 0);
+    lv_label_set_text(title, "PortLens");
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
+
+    if (page > 0) {
+        lv_obj_t *pg = lv_label_create(header);
+        lv_obj_set_style_text_font(pg, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_color(pg, COL_DIM, 0);
+        char buf[4];
+        snprintf(buf, sizeof(buf), "%d/2", page);
+        lv_label_set_text(pg, buf);
+        lv_obj_align(pg, LV_ALIGN_RIGHT_MID, -SIDE_PAD, 0);
+    }
+
+    // Separator
+    lv_obj_t *sep = lv_obj_create(scr);
+    lv_obj_set_size(sep, TFT_H_RES, 1);
+    lv_obj_set_style_bg_color(sep, COL_DIM, 0);
+    lv_obj_set_style_bg_opa(sep, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(sep, 0, 0);
+    lv_obj_set_style_radius(sep, 0, 0);
+    lv_obj_set_style_pad_all(sep, 0, 0);
+    lv_obj_align(sep, LV_ALIGN_TOP_LEFT, 0, HEADER_H);
+    lv_obj_remove_flag(sep, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    return header;
+}
+
+static lv_obj_t *make_rows_container(lv_obj_t *scr)
+{
+    int content_y = HEADER_H + 1;
+    lv_obj_t *rows = lv_obj_create(scr);
+    lv_obj_set_pos(rows, 0, content_y);
+    lv_obj_set_size(rows, TFT_H_RES, TFT_V_RES - content_y);
+    lv_obj_set_style_bg_opa(rows, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(rows, 0, 0);
+    lv_obj_set_style_radius(rows, 0, 0);
+    lv_obj_set_style_pad_hor(rows, SIDE_PAD, 0);
+    lv_obj_set_style_pad_top(rows, 0, 0);
+    lv_obj_set_style_pad_bottom(rows, 0, 0);
+    lv_obj_set_style_pad_row(rows, 0, 0);
+    lv_obj_remove_flag(rows, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_flex_flow(rows, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(rows, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    return rows;
+}
+
+static void page_cycle_cb(lv_timer_t *timer)
+{
+    static bool on_page2 = false;
+    on_page2 = !on_page2;
+    if (on_page2 && s_scr_data2) {
+        lv_screen_load(s_scr_data2);
+    } else if (s_scr_data) {
+        lv_screen_load(s_scr_data);
+    }
 }
 
 static void set_row(lv_obj_t *obj, const char *label, const char *value)
@@ -154,52 +240,8 @@ static void create_data_screen(void)
 {
     s_scr_data = lv_obj_create(NULL);
     init_screen(s_scr_data);
-
-    // Header
-    lv_obj_t *header = lv_obj_create(s_scr_data);
-    lv_obj_set_size(header, TFT_H_RES, HEADER_H);
-    lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(header, 0, 0);
-    lv_obj_set_style_pad_all(header, 0, 0);
-    lv_obj_align(header, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_remove_flag(header, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-
-    lv_obj_t *header_title = lv_label_create(header);
-    lv_obj_set_style_text_font(header_title, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(header_title, COL_ACCENT, 0);
-    lv_label_set_text(header_title, "PortLens");
-    lv_obj_align(header_title, LV_ALIGN_CENTER, 0, 0);
-
-    // Separator
-    lv_obj_t *sep = lv_obj_create(s_scr_data);
-    lv_obj_set_size(sep, TFT_H_RES, 1);
-    lv_obj_set_style_bg_color(sep, COL_DIM, 0);
-    lv_obj_set_style_bg_opa(sep, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(sep, 0, 0);
-    lv_obj_set_style_radius(sep, 0, 0);
-    lv_obj_set_style_pad_all(sep, 0, 0);
-    lv_obj_align(sep, LV_ALIGN_TOP_LEFT, 0, HEADER_H);
-    lv_obj_remove_flag(sep, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-
-    // Data rows container
-    int content_y = HEADER_H + 1;
-    int content_h = TFT_V_RES - content_y;
-
-    lv_obj_t *rows = lv_obj_create(s_scr_data);
-    lv_obj_set_pos(rows, 0, content_y);
-    lv_obj_set_size(rows, TFT_H_RES, content_h);
-    lv_obj_set_style_bg_opa(rows, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(rows, 0, 0);
-    lv_obj_set_style_radius(rows, 0, 0);
-    lv_obj_set_style_pad_hor(rows, SIDE_PAD, 0);
-    lv_obj_set_style_pad_top(rows, 0, 0);
-    lv_obj_set_style_pad_bottom(rows, 0, 0);
-    lv_obj_set_style_pad_row(rows, 0, 0);
-    lv_obj_remove_flag(rows, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_flex_flow(rows, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(rows, LV_FLEX_ALIGN_START,
-                          LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-
+    make_data_header(s_scr_data, 1);
+    lv_obj_t *rows = make_rows_container(s_scr_data);
     s_val_switch = add_row(rows, "Switch");
     s_val_port   = add_row(rows, "Port");
     s_val_vlan   = add_row(rows, "VLAN");
@@ -211,11 +253,25 @@ static void create_data_screen(void)
     s_val_dhcp   = add_row(rows, "DHCP");
 }
 
+static void create_data2_screen(void)
+{
+    s_scr_data2 = lv_obj_create(NULL);
+    init_screen(s_scr_data2);
+    make_data_header(s_scr_data2, 2);
+    lv_obj_t *rows = make_rows_container(s_scr_data2);
+    s_val_ping  = add_row(rows, "GW Ping");
+    s_val_dns2  = add_row(rows, "DNS");
+    s_val_wan   = add_row(rows, "WAN");
+    s_val_8021x = add_row(rows, "802.1X");
+    s_val_desc  = add_row(rows, "Desc");
+}
+
 static void create_ui(void)
 {
     create_splash_screen();
     create_waiting_screen();
     create_data_screen();
+    create_data2_screen();
 }
 
 // ---- Public API -------------------------------------------------------------
@@ -277,8 +333,23 @@ void lvgl_ui_show_splash(void)
 void lvgl_ui_show_waiting_link(void)
 {
     lvgl_port_lock(0);
+    if (s_page_timer) {
+        lv_timer_delete(s_page_timer);
+        s_page_timer = NULL;
+    }
     if (s_scr_waiting) lv_screen_load(s_scr_waiting);
     lvgl_port_unlock();
+}
+
+static const char *test_status_str(test_status_t s)
+{
+    switch (s) {
+    case TEST_NOT_RUN: return "--";
+    case TEST_RUNNING: return "...";
+    case TEST_PASS:    return "OK";
+    case TEST_FAIL:    return "Fail";
+    default:           return "--";
+    }
 }
 
 void lvgl_ui_show_data(const link_info_t *link)
@@ -290,7 +361,12 @@ void lvgl_ui_show_data(const link_info_t *link)
 
     lvgl_port_lock(0);
 
-    if (s_scr_data) lv_screen_load(s_scr_data);
+    // On the first call, load page 1 and start the auto-cycle timer.
+    // Subsequent calls just update values without disrupting the current page.
+    if (!s_page_timer) {
+        if (s_scr_data) lv_screen_load(s_scr_data);
+        s_page_timer = lv_timer_create(page_cycle_cb, 5000, NULL);
+    }
 
     set_row(s_val_switch, "Switch", switch_name(lldp, cdp));
     set_row(s_val_port,   "Port",   port_name(lldp, cdp));
@@ -335,6 +411,19 @@ void lvgl_ui_show_data(const link_info_t *link)
     set_row(s_val_gw,   "GW",   dhcp ? dhcp->gateway : "--");
     set_row(s_val_dns,  "DNS",  dhcp ? dhcp->dns     : "--");
     set_row(s_val_dhcp, "DHCP", dhcp ? "OK"          : "waiting");
+
+    // Page 2 — connectivity / protocol details
+    const connectivity_results_t *conn = connectivity_get_results();
+    set_row(s_val_ping,  "GW Ping", conn ? test_status_str(conn->ping_gw) : "--");
+    set_row(s_val_dns2,  "DNS",     conn ? test_status_str(conn->dns)     : "--");
+    set_row(s_val_wan,   "WAN",     conn ? test_status_str(conn->http)    : "--");
+
+    const char *eapol = eapol_get_status();
+    set_row(s_val_8021x, "802.1X", eapol ? eapol : (eapol_detected() ? "Detected" : "--"));
+
+    const char *desc = NULL;
+    if (lldp && lldp->system_desc[0]) desc = lldp->system_desc;
+    set_row(s_val_desc, "Desc", desc ? desc : "--");
 
     lvgl_port_unlock();
 }
