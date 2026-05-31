@@ -199,12 +199,9 @@ void app_main(void)
         }
 
         if (current == STATE_LINK_UP && !got_protocol_data) {
-            // Wait for DHCP before uncovering the splash — LLDP alone arrives
-            // ~5s before DHCP, and showing partial data mid-load reveals
-            // LVGL layout glitches. DHCP ready = "connection established".
-            if (dhcp_info_get()) {
+            if (lldp_get_info() || cdp_get_info() || dhcp_info_get()) {
                 got_protocol_data = true;
-                ESP_LOGI(TAG, "DHCP ready — showing results");
+                ESP_LOGI(TAG, "Protocol data ready — showing results");
 #if FEATURE_DISPLAY
                 display_dirty = true;
 #endif
