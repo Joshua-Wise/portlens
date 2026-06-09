@@ -15,6 +15,8 @@
 #include "esp_heap_caps.h"
 #include <string.h>
 
+#include "proto_lock.h"
+
 static const char *TAG = "connectivity";
 
 #define CONN_TASK_STACK  4096
@@ -219,7 +221,9 @@ void connectivity_start_tests(const esp_ip4_addr_t *gateway, esp_netif_t *netif)
     }
 
     // Reset results
+    proto_lock();
     memset(&s_results, 0, sizeof(s_results));
+    proto_unlock();
 
     // Copy params for the task
     s_task_params.gateway = *gateway;
@@ -250,6 +254,8 @@ const connectivity_results_t *connectivity_get_results(void)
 
 void connectivity_reset(void)
 {
+    proto_lock();
     memset(&s_results, 0, sizeof(s_results));
+    proto_unlock();
     ESP_LOGI(TAG, "Connectivity results reset");
 }

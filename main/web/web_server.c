@@ -3,6 +3,7 @@
 #if FEATURE_WIFI_AP
 
 #include "config.h"
+#include "proto_lock.h"
 #include "protocols/lldp_parser.h"
 #include "protocols/cdp_parser.h"
 #include "protocols/dhcp_info.h"
@@ -24,6 +25,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 static const char *TAG = "web_server";
 
@@ -37,6 +39,9 @@ static TaskHandle_t   s_dns_task = NULL;
 
 #define DNS_PORT     53
 #define DNS_BUF_SIZE 512
+// Bytes appended after the echoed query: name ptr(2) + type(2) + class(2)
+// + TTL(4) + RDLENGTH(2) + RDATA(4) = 16
+#define DNS_ANSWER_LEN 16
 
 static void dns_server_task(void *pvParam)
 {
@@ -74,6 +79,11 @@ static void dns_server_task(void *pvParam)
                            (struct sockaddr *)&client_addr, &client_len);
         if (len < 12) continue;  // Too short for DNS header
 
+        // We append a fixed 16-byte answer record after the echoed query, so
+        // the query must leave room for it. Drop anything that would overflow
+        // `resp` (a malformed/oversized query could otherwise smash the stack).
+        if (len > DNS_BUF_SIZE - DNS_ANSWER_LEN) continue;
+
         // Build minimal DNS response:
         // Copy the query, set QR=1 (response), ANCOUNT=1, add an answer
         uint8_t resp[DNS_BUF_SIZE];
@@ -106,7 +116,10 @@ static void dns_server_task(void *pvParam)
     vTaskDelete(NULL);
 }
 
-// ---- HTML page generation ---------------------------------------------------
+// ---- Results snapshot -------------------------------------------------------
+// The page is served as a static shell; all live data is delivered as JSON via
+// /api/results and rendered client-side. collect_display() takes a consistent
+// snapshot of the shared protocol state under proto_lock.
 
 static const char *status_str(test_status_t s)
 {
@@ -118,298 +131,318 @@ static const char *status_str(test_status_t s)
     }
 }
 
-static const char *status_class(test_status_t s)
-{
-    switch (s) {
-    case TEST_PASS:    return "pass";
-    case TEST_FAIL:    return "fail";
-    case TEST_RUNNING: return "warn";
-    default:           return "";
-    }
-}
+// Display-ready snapshot. All strings are pre-formatted for direct rendering.
+typedef struct {
+    char        sw[80];
+    char        port[80];
+    char        vlan[80];
+    char        mgmt[48];
+    char        proto[8];
+    int         ttl;
+    char        port_desc[128];
+    char        platform[96];
+    char        ip[16];
+    char        netmask[16];
+    char        gateway[16];
+    char        dns[16];
+    char        link[32];
+    const char *ping_gw;   // points at a status_str() literal
+    const char *dns_test;
+    const char *http;
+    char        dot1x[64];
+    char        poe[32];
+} display_data_t;
 
-// Generate the full HTML page with current results
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wformat-truncation"
-static int generate_html(char *buf, size_t buflen)
+static void collect_display(display_data_t *d)
 {
+    memset(d, 0, sizeof(*d));
+    strcpy(d->proto, "--");
+    strcpy(d->vlan, "--");
+    strcpy(d->mgmt, "--");
+    strcpy(d->poe, "No");
+    d->ping_gw = d->dns_test = d->http = "--";
+
+    proto_lock();
+
     const lldp_info_t *lldp = lldp_get_info();
     const cdp_info_t  *cdp  = cdp_get_info();
     const dhcp_info_t *dhcp = dhcp_info_get();
     const connectivity_results_t *conn = connectivity_get_results();
 
-    // Switch info
-    const char *sw_name = "--";
-    const char *port_name = "--";
-    char sys_desc[80] = "";
-    const char *port_desc = "";
-    const char *proto = "--";
-    int ttl = 0;
-    char vlan_str[80] = "--";
-    char mgmt_str[48] = "--";
-    char poe_str[32] = "No";
+    const char *sw = "--", *port = "--";
 
     if (lldp) {
-        if (lldp->system_name[0]) sw_name = lldp->system_name;
-        if (lldp->port_id[0]) port_name = lldp->port_id;
-        if (lldp->system_desc[0]) { strncpy(sys_desc, lldp->system_desc, sizeof(sys_desc) - 1); sys_desc[sizeof(sys_desc) - 1] = '\0'; }
-        if (lldp->port_desc[0]) port_desc = lldp->port_desc;
-        proto = "LLDP";
-        ttl = lldp->ttl;
+        if (lldp->system_name[0]) sw = lldp->system_name;
+        if (lldp->port_id[0]) port = lldp->port_id;
+        if (lldp->system_desc[0]) strlcpy(d->platform, lldp->system_desc, sizeof(d->platform));
+        if (lldp->port_desc[0]) strlcpy(d->port_desc, lldp->port_desc, sizeof(d->port_desc));
+        strcpy(d->proto, "LLDP");
+        d->ttl = lldp->ttl;
         if (lldp->has_vlan) {
             if (lldp->has_vlan_name && lldp->vlan_name[0])
-                snprintf(vlan_str, sizeof(vlan_str), "%u (%s)", lldp->port_vlan_id, lldp->vlan_name);
+                snprintf(d->vlan, sizeof(d->vlan), "%u (%s)", lldp->port_vlan_id, lldp->vlan_name);
             else
-                snprintf(vlan_str, sizeof(vlan_str), "%u", lldp->port_vlan_id);
+                snprintf(d->vlan, sizeof(d->vlan), "%u", lldp->port_vlan_id);
         }
         if (lldp->has_mgmt_addr && lldp->mgmt_addr_subtype == 1 && lldp->mgmt_addr_len >= 4) {
-            snprintf(mgmt_str, sizeof(mgmt_str), "%u.%u.%u.%u",
+            snprintf(d->mgmt, sizeof(d->mgmt), "%u.%u.%u.%u",
                      lldp->mgmt_addr[0], lldp->mgmt_addr[1],
                      lldp->mgmt_addr[2], lldp->mgmt_addr[3]);
         }
         if (lldp->has_poe) {
             uint8_t ps = lldp->poe_mdi_power_support;
-            if ((ps & 0x02) && (ps & 0x04)) snprintf(poe_str, sizeof(poe_str), "Enabled");
-            else if (ps & 0x02) snprintf(poe_str, sizeof(poe_str), "Supported");
-            else snprintf(poe_str, sizeof(poe_str), "Yes");
+            if ((ps & 0x02) && (ps & 0x04)) strcpy(d->poe, "Enabled");
+            else if (ps & 0x02) strcpy(d->poe, "Supported");
+            else strcpy(d->poe, "Yes");
         }
     } else if (cdp) {
-        if (cdp->device_id[0]) sw_name = cdp->device_id;
-        if (cdp->port_id[0]) port_name = cdp->port_id;
-        if (cdp->platform[0]) { strncpy(sys_desc, cdp->platform, sizeof(sys_desc) - 1); sys_desc[sizeof(sys_desc) - 1] = '\0'; }
-        proto = "CDP";
-        ttl = cdp->ttl;
-        if (cdp->has_native_vlan) snprintf(vlan_str, sizeof(vlan_str), "%u", cdp->native_vlan);
+        if (cdp->device_id[0]) sw = cdp->device_id;
+        if (cdp->port_id[0]) port = cdp->port_id;
+        if (cdp->platform[0]) strlcpy(d->platform, cdp->platform, sizeof(d->platform));
+        strcpy(d->proto, "CDP");
+        d->ttl = cdp->ttl;
+        if (cdp->has_native_vlan) snprintf(d->vlan, sizeof(d->vlan), "%u", cdp->native_vlan);
         if (cdp->has_mgmt_addr && cdp->mgmt_addr_len >= 4) {
-            snprintf(mgmt_str, sizeof(mgmt_str), "%u.%u.%u.%u",
+            snprintf(d->mgmt, sizeof(d->mgmt), "%u.%u.%u.%u",
                      cdp->mgmt_addr[0], cdp->mgmt_addr[1],
                      cdp->mgmt_addr[2], cdp->mgmt_addr[3]);
         }
         if (cdp->has_power && cdp->power_available_mw > 0) {
-            snprintf(poe_str, sizeof(poe_str), "%luW", (unsigned long)(cdp->power_available_mw / 1000));
+            snprintf(d->poe, sizeof(d->poe), "%luW", (unsigned long)(cdp->power_available_mw / 1000));
         }
     }
+    strlcpy(d->sw, sw, sizeof(d->sw));
+    strlcpy(d->port, port, sizeof(d->port));
 
-    // Link info
+    if (dhcp) {
+        strlcpy(d->ip, dhcp->ip, sizeof(d->ip));
+        strlcpy(d->netmask, dhcp->netmask, sizeof(d->netmask));
+        strlcpy(d->gateway, dhcp->gateway, sizeof(d->gateway));
+        strlcpy(d->dns, dhcp->dns, sizeof(d->dns));
+    } else {
+        strcpy(d->ip, "DHCP...");
+        strcpy(d->netmask, "--");
+        strcpy(d->gateway, "--");
+        strcpy(d->dns, "--");
+    }
+
+    d->ping_gw  = status_str(conn->ping_gw);
+    d->dns_test = status_str(conn->dns);
+    d->http     = status_str(conn->http);
+
+    if (eapol_detected()) {
+        const char *e = eapol_get_status();
+        strlcpy(d->dot1x, e ? e : "None", sizeof(d->dot1x));
+    } else {
+        strcpy(d->dot1x, "None");
+    }
+
+    proto_unlock();
+
+    // Link info comes from the PHY (not the protocol structs) — no lock needed.
     esp_eth_handle_t eth = eth_get_handle();
-    const char *link_str = "Down";
-    char link_detail[32] = "";
+    strcpy(d->link, "Down");
     if (eth) {
         eth_speed_t speed;
         eth_duplex_t duplex;
         esp_eth_ioctl(eth, ETH_CMD_G_SPEED, &speed);
         esp_eth_ioctl(eth, ETH_CMD_G_DUPLEX_MODE, &duplex);
-        snprintf(link_detail, sizeof(link_detail), "%s %s",
+        snprintf(d->link, sizeof(d->link), "%s %s",
                  (speed == ETH_SPEED_100M) ? "100M" : "10M",
                  (duplex == ETH_DUPLEX_FULL) ? "Full-Duplex" : "Half-Duplex");
-        link_str = link_detail;
     }
-
-    const char *eapol_str = eapol_detected() ? eapol_get_status() : "None";
-
-    return snprintf(buf, buflen,
-        "<!DOCTYPE html><html><head>"
-        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<meta http-equiv='refresh' content='5'>"
-        "<title>PortLens</title>"
-        "<style>"
-        "*{box-sizing:border-box;margin:0;padding:0}"
-        "body{font-family:-apple-system,system-ui,sans-serif;background:#0d1117;color:#e6edf3;padding:16px;max-width:480px;margin:0 auto}"
-        "h1{font-size:20px;margin-bottom:4px;color:#58a6ff}"
-        ".sub{color:#8b949e;font-size:13px;margin-bottom:16px}"
-        ".section{margin-bottom:16px}"
-        ".section h2{font-size:14px;color:#8b949e;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;border-bottom:1px solid #30363d;padding-bottom:4px}"
-        ".row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #21262d}"
-        ".row .label{color:#8b949e;font-size:14px}"
-        ".row .value{font-size:14px;font-weight:500;text-align:right;max-width:60%%}"
-        ".pass{color:#3fb950}"
-        ".fail{color:#f85149}"
-        ".warn{color:#d29922}"
-        ".badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;font-weight:600}"
-        ".badge.pass{background:#0f2d1a}"
-        ".badge.fail{background:#3d1014}"
-        ".badge.warn{background:#3d2c06}"
-        "button{background:#21262d;color:#e6edf3;border:1px solid #30363d;padding:10px 20px;border-radius:6px;font-size:14px;width:100%%;margin-top:8px;cursor:pointer}"
-        "button:active{background:#30363d}"
-        "#ping-modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:10}"
-        "#ping-modal.open{display:flex}"
-        "#ping-modal .backdrop{position:absolute;inset:0;background:rgba(0,0,0,0.7)}"
-        "#ping-modal .card{position:relative;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px;width:90%%;max-width:360px}"
-        "#ping-modal h3{margin-bottom:12px;color:#58a6ff;font-size:16px}"
-        "#ping-modal input{width:100%%;padding:8px;background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:4px;margin-bottom:8px;font-size:14px}"
-        "#ping-result{margin-top:8px;padding:8px;font-size:13px;min-height:18px}"
-        "</style></head><body>"
-        "<h1>PortLens</h1>"
-
-        "<div class='section'><h2>Switch</h2>"
-        "<div class='row'><span class='label'>Name</span><span class='value'>%s</span></div>"
-        "<div class='row'><span class='label'>Port</span><span class='value'>%s</span></div>"
-        "<div class='row'><span class='label'>VLAN</span><span class='value'>%s</span></div>"
-        "<div class='row'><span class='label'>Mgmt IP</span><span class='value'>%s</span></div>"
-        "<div class='row'><span class='label'>Protocol</span><span class='value'>%s (TTL %d)</span></div>"
-        "%s%s%s"
-        "%s%s%s"
-        "</div>"
-
-        "<div class='section'><h2>Network</h2>"
-        "<div class='row'><span class='label'>IP Address</span><span class='value'>%s</span></div>"
-        "<div class='row'><span class='label'>Netmask</span><span class='value'>%s</span></div>"
-        "<div class='row'><span class='label'>Gateway</span><span class='value'>%s</span></div>"
-        "<div class='row'><span class='label'>DNS</span><span class='value'>%s</span></div>"
-        "</div>"
-
-        "<div class='section'><h2>Connectivity</h2>"
-        "<div class='row'><span class='label'>Link</span><span class='value'>%s</span></div>"
-        "<div class='row'><span class='label'>Gateway Ping</span><span class='value %s'><span class='badge %s'>%s</span></span></div>"
-        "<div class='row'><span class='label'>DNS Test</span><span class='value %s'><span class='badge %s'>%s</span></span></div>"
-        "<div class='row'><span class='label'>HTTP / WAN</span><span class='value %s'><span class='badge %s'>%s</span></span></div>"
-        "<div class='row'><span class='label'>802.1X</span><span class='value'>%s</span></div>"
-        "<div class='row'><span class='label'>PoE</span><span class='value'>%s</span></div>"
-        "</div>"
-
-        "%s%s%s"
-
-        "<button onclick='openPing()'>Ping</button>"
-        "<button onclick='location.reload()'>Refresh</button>"
-
-        "<div id='ping-modal'>"
-        "<div class='backdrop' onclick='closePing()'></div>"
-        "<div class='card'>"
-        "<h3>Ping</h3>"
-        "<input id='ping-ip' type='text' placeholder='IP address' autocomplete='off'>"
-        "<button onclick='doPing()'>Ping</button>"
-        "<div id='ping-result'></div>"
-        "<button onclick='closePing()'>Close</button>"
-        "</div></div>"
-
-        "<script>"
-        "function openPing(){"
-        "document.getElementById('ping-modal').classList.add('open');"
-        "var el=document.getElementById('ping-result');el.textContent='';el.className='';"
-        "document.getElementById('ping-ip').focus();"
-        "}"
-        "function closePing(){"
-        "document.getElementById('ping-modal').classList.remove('open');"
-        "}"
-        "function doPing(){"
-        "var ip=document.getElementById('ping-ip').value.trim();"
-        "if(!ip)return;"
-        "var el=document.getElementById('ping-result');"
-        "el.className='warn';"
-        "el.textContent='Pinging '+ip+'...';"
-        "fetch('/api/ping?ip='+encodeURIComponent(ip))"
-        ".then(function(r){return r.json();})"
-        ".then(function(d){"
-        "if(d.error){el.className='fail';el.textContent='Error: '+d.error;return;}"
-        "el.className=d.received>0?'pass':'fail';"
-        "var loss=d.sent>0?Math.round((d.sent-d.received)*100/d.sent):100;"
-        "el.textContent=d.ip+': '+d.received+'/'+d.sent+' replies, '+loss+'%% loss, avg '+d.avg_ms+' ms';"
-        "})"
-        ".catch(function(){el.className='fail';el.textContent='Request failed';});"
-        "}"
-        "document.getElementById('ping-ip').addEventListener('keydown',function(e){if(e.key==='Enter')doPing();});"
-        "</script>"
-        "<div style='text-align:center;margin-top:12px;color:#8b949e;font-size:11px'>PortLens v1.0</div>"
-        "</body></html>",
-
-        /* Switch */
-        sw_name, port_name, vlan_str, mgmt_str, proto, ttl,
-        /* Port desc (conditional) */
-        port_desc[0] ? "<div class='row'><span class='label'>Port Desc</span><span class='value'>" : "",
-        port_desc[0] ? port_desc : "",
-        port_desc[0] ? "</span></div>" : "",
-        /* System desc (conditional) */
-        sys_desc[0] ? "<div class='row'><span class='label'>Platform</span><span class='value' style='font-size:12px'>" : "",
-        sys_desc[0] ? sys_desc : "",
-        sys_desc[0] ? "</span></div>" : "",
-
-        /* Network */
-        dhcp ? dhcp->ip : "DHCP...",
-        dhcp ? dhcp->netmask : "--",
-        dhcp ? dhcp->gateway : "--",
-        dhcp ? dhcp->dns : "--",
-
-        /* Connectivity */
-        link_str,
-        status_class(conn->ping_gw), status_class(conn->ping_gw), status_str(conn->ping_gw),
-        status_class(conn->dns), status_class(conn->dns), status_str(conn->dns),
-        status_class(conn->http), status_class(conn->http), status_str(conn->http),
-        eapol_str, poe_str,
-
-        /* System desc long (conditional) */
-        "", "", ""
-    );
 }
-#pragma GCC diagnostic pop
 
-// Generate JSON results
+// Copy `src` into `dst` as a JSON string body, escaping the characters that
+// would otherwise break the JSON (or inject into it — switch-supplied names
+// are untrusted). Always NUL-terminates.
+static void json_escape(char *dst, size_t dstsize, const char *src)
+{
+    size_t j = 0;
+    for (size_t i = 0; src[i] && j + 1 < dstsize; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if (c == '"' || c == '\\') {
+            if (j + 2 >= dstsize) break;
+            dst[j++] = '\\';
+            dst[j++] = c;
+        } else if (c < 0x20) {
+            if (j + 6 >= dstsize) break;
+            j += snprintf(dst + j, dstsize - j, "\\u%04x", c);
+        } else {
+            dst[j++] = c;
+        }
+    }
+    dst[j] = '\0';
+}
+
+// ---- HTML page (static shell) ----------------------------------------------
+// All values are filled in by the client from /api/results, so this is a
+// constant served straight from flash — no per-request rendering or buffer.
+// Rendering values via textContent (not innerHTML) also means switch-supplied
+// strings cannot inject markup into the operator's browser.
+
+static const char PAGE_HTML[] =
+    "<!DOCTYPE html><html><head>"
+    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<title>PortLens</title>"
+    "<style>"
+    "*{box-sizing:border-box;margin:0;padding:0}"
+    "body{font-family:-apple-system,system-ui,sans-serif;background:#0d1117;color:#e6edf3;padding:16px;max-width:480px;margin:0 auto}"
+    "h1{font-size:20px;margin-bottom:4px;color:#58a6ff}"
+    ".sub{color:#8b949e;font-size:13px;margin-bottom:16px}"
+    ".section{margin-bottom:16px}"
+    ".section h2{font-size:14px;color:#8b949e;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;border-bottom:1px solid #30363d;padding-bottom:4px}"
+    ".row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #21262d}"
+    ".row .label{color:#8b949e;font-size:14px}"
+    ".row .value{font-size:14px;font-weight:500;text-align:right;max-width:60%}"
+    ".pass{color:#3fb950}"
+    ".fail{color:#f85149}"
+    ".warn{color:#d29922}"
+    ".badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;font-weight:600}"
+    ".badge.pass{background:#0f2d1a}"
+    ".badge.fail{background:#3d1014}"
+    ".badge.warn{background:#3d2c06}"
+    "button{background:#21262d;color:#e6edf3;border:1px solid #30363d;padding:10px 20px;border-radius:6px;font-size:14px;width:100%;margin-top:8px;cursor:pointer}"
+    "button:active{background:#30363d}"
+    "#ping-modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:10}"
+    "#ping-modal.open{display:flex}"
+    "#ping-modal .backdrop{position:absolute;inset:0;background:rgba(0,0,0,0.7)}"
+    "#ping-modal .card{position:relative;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px;width:90%;max-width:360px}"
+    "#ping-modal h3{margin-bottom:12px;color:#58a6ff;font-size:16px}"
+    "#ping-modal input{width:100%;padding:8px;background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:4px;margin-bottom:8px;font-size:14px}"
+    "#ping-result{margin-top:8px;padding:8px;font-size:13px;min-height:18px}"
+    "</style></head><body>"
+    "<h1>PortLens</h1>"
+
+    "<div class='section'><h2>Switch</h2>"
+    "<div class='row'><span class='label'>Name</span><span class='value' id='sw'>--</span></div>"
+    "<div class='row'><span class='label'>Port</span><span class='value' id='port'>--</span></div>"
+    "<div class='row'><span class='label'>VLAN</span><span class='value' id='vlan'>--</span></div>"
+    "<div class='row'><span class='label'>Mgmt IP</span><span class='value' id='mgmt'>--</span></div>"
+    "<div class='row'><span class='label'>Protocol</span><span class='value'><span id='proto'>--</span> (TTL <span id='ttl'>0</span>)</span></div>"
+    "<div class='row' id='pdrow' style='display:none'><span class='label'>Port Desc</span><span class='value' id='pdesc'></span></div>"
+    "<div class='row' id='pfrow' style='display:none'><span class='label'>Platform</span><span class='value' id='plat' style='font-size:12px'></span></div>"
+    "</div>"
+
+    "<div class='section'><h2>Network</h2>"
+    "<div class='row'><span class='label'>IP Address</span><span class='value' id='ip'>--</span></div>"
+    "<div class='row'><span class='label'>Netmask</span><span class='value' id='netmask'>--</span></div>"
+    "<div class='row'><span class='label'>Gateway</span><span class='value' id='gateway'>--</span></div>"
+    "<div class='row'><span class='label'>DNS</span><span class='value' id='dns'>--</span></div>"
+    "</div>"
+
+    "<div class='section'><h2>Connectivity</h2>"
+    "<div class='row'><span class='label'>Link</span><span class='value' id='link'>--</span></div>"
+    "<div class='row'><span class='label'>Gateway Ping</span><span class='value'><span class='badge' id='ping_gw'>--</span></span></div>"
+    "<div class='row'><span class='label'>DNS Test</span><span class='value'><span class='badge' id='dns_test'>--</span></span></div>"
+    "<div class='row'><span class='label'>HTTP / WAN</span><span class='value'><span class='badge' id='http'>--</span></span></div>"
+    "<div class='row'><span class='label'>802.1X</span><span class='value' id='dot1x'>--</span></div>"
+    "<div class='row'><span class='label'>PoE</span><span class='value' id='poe'>--</span></div>"
+    "</div>"
+
+    "<button onclick='openPing()'>Ping</button>"
+    "<button onclick='update()'>Refresh</button>"
+
+    "<div id='ping-modal'>"
+    "<div class='backdrop' onclick='closePing()'></div>"
+    "<div class='card'>"
+    "<h3>Ping</h3>"
+    "<input id='ping-ip' type='text' placeholder='IP address' autocomplete='off'>"
+    "<button onclick='doPing()'>Ping</button>"
+    "<div id='ping-result'></div>"
+    "<button onclick='closePing()'>Close</button>"
+    "</div></div>"
+
+    "<script>"
+    "function cls(s){return s==='PASS'?'pass':s==='FAIL'?'fail':s==='...'?'warn':'';}"
+    "function set(id,v){var e=document.getElementById(id);if(e)e.textContent=(v==null?'':v);}"
+    "function badge(id,v){var e=document.getElementById(id);if(!e)return;e.textContent=v;e.className='badge '+cls(v);}"
+    "function row(rid,vid,v){var r=document.getElementById(rid);set(vid,v);if(r)r.style.display=v?'':'none';}"
+    "function update(){"
+    "fetch('/api/results').then(function(r){return r.json();}).then(function(d){"
+    "set('sw',d.switch);set('port',d.port);set('vlan',d.vlan);set('mgmt',d.mgmt);"
+    "set('proto',d.protocol);set('ttl',d.ttl);"
+    "row('pdrow','pdesc',d.port_desc);row('pfrow','plat',d.platform);"
+    "set('ip',d.ip);set('netmask',d.netmask);set('gateway',d.gateway);set('dns',d.dns);"
+    "set('link',d.link);"
+    "badge('ping_gw',d.ping_gw);badge('dns_test',d.dns_test);badge('http',d.http);"
+    "set('dot1x',d.dot1x);set('poe',d.poe);"
+    "}).catch(function(){});"
+    "}"
+    "function openPing(){"
+    "document.getElementById('ping-modal').classList.add('open');"
+    "var el=document.getElementById('ping-result');el.textContent='';el.className='';"
+    "document.getElementById('ping-ip').focus();"
+    "}"
+    "function closePing(){"
+    "document.getElementById('ping-modal').classList.remove('open');"
+    "}"
+    "function doPing(){"
+    "var ip=document.getElementById('ping-ip').value.trim();"
+    "if(!ip)return;"
+    "var el=document.getElementById('ping-result');"
+    "el.className='warn';"
+    "el.textContent='Pinging '+ip+'...';"
+    "fetch('/api/ping?ip='+encodeURIComponent(ip))"
+    ".then(function(r){return r.json();})"
+    ".then(function(d){"
+    "if(d.error){el.className='fail';el.textContent='Error: '+d.error;return;}"
+    "el.className=d.received>0?'pass':'fail';"
+    "var loss=d.sent>0?Math.round((d.sent-d.received)*100/d.sent):100;"
+    "el.textContent=d.ip+': '+d.received+'/'+d.sent+' replies, '+loss+'% loss, avg '+d.avg_ms+' ms';"
+    "})"
+    ".catch(function(){el.className='fail';el.textContent='Request failed';});"
+    "}"
+    "document.getElementById('ping-ip').addEventListener('keydown',function(e){if(e.key==='Enter')doPing();});"
+    "update();setInterval(update,5000);"
+    "</script>"
+    "<div style='text-align:center;margin-top:12px;color:#8b949e;font-size:11px'>PortLens v1.0</div>"
+    "</body></html>";
+
+// Generate JSON results from a consistent snapshot
 static int generate_json(char *buf, size_t buflen)
 {
-    const lldp_info_t *lldp = lldp_get_info();
-    const cdp_info_t  *cdp  = cdp_get_info();
-    const dhcp_info_t *dhcp = dhcp_info_get();
-    const connectivity_results_t *conn = connectivity_get_results();
+    display_data_t d;
+    collect_display(&d);
 
-    char vlan_str[16] = "null";
-    if (lldp && lldp->has_vlan)
-        snprintf(vlan_str, sizeof(vlan_str), "%u", lldp->port_vlan_id);
-    else if (cdp && cdp->has_native_vlan)
-        snprintf(vlan_str, sizeof(vlan_str), "%u", cdp->native_vlan);
+    // Escape the switch-supplied (untrusted) strings.
+    char sw[160], port[160], vlan[160], pdesc[256], plat[192], dot1x[128];
+    json_escape(sw, sizeof(sw), d.sw);
+    json_escape(port, sizeof(port), d.port);
+    json_escape(vlan, sizeof(vlan), d.vlan);
+    json_escape(pdesc, sizeof(pdesc), d.port_desc);
+    json_escape(plat, sizeof(plat), d.platform);
+    json_escape(dot1x, sizeof(dot1x), d.dot1x);
 
     return snprintf(buf, buflen,
         "{"
-        "\"switch\":\"%s\","
-        "\"port\":\"%s\","
-        "\"vlan\":%s,"
-        "\"protocol\":\"%s\","
-        "\"ip\":\"%s\","
-        "\"netmask\":\"%s\","
-        "\"gateway\":\"%s\","
-        "\"dns\":\"%s\","
-        "\"ping_gw\":\"%s\","
-        "\"dns_test\":\"%s\","
-        "\"http\":\"%s\","
-        "\"dot1x\":\"%s\","
-        "\"poe\":%s"
+        "\"switch\":\"%s\",\"port\":\"%s\",\"vlan\":\"%s\","
+        "\"mgmt\":\"%s\",\"protocol\":\"%s\",\"ttl\":%d,"
+        "\"port_desc\":\"%s\",\"platform\":\"%s\","
+        "\"ip\":\"%s\",\"netmask\":\"%s\",\"gateway\":\"%s\",\"dns\":\"%s\","
+        "\"link\":\"%s\",\"ping_gw\":\"%s\",\"dns_test\":\"%s\","
+        "\"http\":\"%s\",\"dot1x\":\"%s\",\"poe\":\"%s\""
         "}",
-        lldp ? lldp->system_name : (cdp ? cdp->device_id : ""),
-        lldp ? lldp->port_id : (cdp ? cdp->port_id : ""),
-        vlan_str,
-        lldp ? "LLDP" : (cdp ? "CDP" : "none"),
-        dhcp ? dhcp->ip : "",
-        dhcp ? dhcp->netmask : "",
-        dhcp ? dhcp->gateway : "",
-        dhcp ? dhcp->dns : "",
-        status_str(conn->ping_gw),
-        status_str(conn->dns),
-        status_str(conn->http),
-        eapol_detected() ? eapol_get_status() : "none",
-        (lldp && lldp->has_poe) ? "true" : ((cdp && cdp->has_power) ? "true" : "false")
-    );
+        sw, port, vlan,
+        d.mgmt, d.proto, d.ttl,
+        pdesc, plat,
+        d.ip, d.netmask, d.gateway, d.dns,
+        d.link, d.ping_gw, d.dns_test,
+        d.http, dot1x, d.poe);
 }
 
 // ---- HTTP handlers ----------------------------------------------------------
 
-#define PAGE_BUF_SIZE 8192
-
 static esp_err_t root_handler(httpd_req_t *req)
 {
-    char *buf = malloc(PAGE_BUF_SIZE);
-    if (!buf) {
-        httpd_resp_send_500(req);
-        return ESP_OK;
-    }
-
-    generate_html(buf, PAGE_BUF_SIZE);
     httpd_resp_set_type(req, "text/html");
-    httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
-    free(buf);
+    httpd_resp_send(req, PAGE_HTML, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
 static esp_err_t json_handler(httpd_req_t *req)
 {
-    char buf[1024];
+    char buf[2048];
     generate_json(buf, sizeof(buf));
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
@@ -417,12 +450,23 @@ static esp_err_t json_handler(httpd_req_t *req)
 }
 
 // ---- Ping API ---------------------------------------------------------------
-// Runs a synchronous 4-count ping to a user-provided IP, returns JSON stats.
+// A user-requested ping takes several seconds. Running it inline would block
+// the (single) HTTP worker, freezing the rest of the UI. Instead the handler
+// hands the request off to a dedicated task via the async handler API and
+// returns immediately, keeping the server responsive. Only one ping runs at a
+// time.
 
 typedef struct {
     SemaphoreHandle_t done;
     uint32_t rtt_total_ms;
 } ping_ctx_t;
+
+typedef struct {
+    httpd_req_t *req;   // async-captured request
+    char ip[48];
+} ping_job_t;
+
+static volatile bool s_ping_busy = false;
 
 static void ping_api_on_success(esp_ping_handle_t hdl, void *args)
 {
@@ -449,33 +493,20 @@ static void send_ping_error(httpd_req_t *req, const char *status, const char *ms
     httpd_resp_send(req, buf, n);
 }
 
-static esp_err_t ping_handler(httpd_req_t *req)
+static void ping_async_task(void *arg)
 {
-    char query[64];
-    char ip[48];
-
-    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
-        httpd_query_key_value(query, "ip", ip, sizeof(ip)) != ESP_OK) {
-        send_ping_error(req, "400 Bad Request", "missing ip param");
-        return ESP_OK;
-    }
+    ping_job_t *job = (ping_job_t *)arg;
+    httpd_req_t *req = job->req;
 
     struct in_addr in;
-    if (inet_aton(ip, &in) == 0) {
-        send_ping_error(req, "400 Bad Request", "invalid ip");
-        return ESP_OK;
-    }
+    inet_aton(job->ip, &in);   // already validated in the handler
 
     esp_netif_t *eth_netif = eth_get_netif();
-    if (!eth_netif) {
-        send_ping_error(req, "503 Service Unavailable", "no ethernet");
-        return ESP_OK;
-    }
-
     ping_ctx_t ctx = { .done = xSemaphoreCreateBinary(), .rtt_total_ms = 0 };
-    if (!ctx.done) {
+
+    if (!ctx.done || !eth_netif) {
         send_ping_error(req, "500 Internal Server Error", "out of memory");
-        return ESP_OK;
+        goto cleanup;
     }
 
     esp_ping_config_t cfg = ESP_PING_DEFAULT_CONFIG();
@@ -501,9 +532,8 @@ static esp_err_t ping_handler(httpd_req_t *req)
 
     esp_ping_handle_t hdl = NULL;
     if (esp_ping_new_session(&cfg, &cbs, &hdl) != ESP_OK) {
-        vSemaphoreDelete(ctx.done);
         send_ping_error(req, "500 Internal Server Error", "ping session failed");
-        return ESP_OK;
+        goto cleanup;
     }
 
     esp_ping_start(hdl);
@@ -513,18 +543,73 @@ static esp_err_t ping_handler(httpd_req_t *req)
     uint32_t sent = 0, received = 0;
     esp_ping_get_profile(hdl, ESP_PING_PROF_REQUEST, &sent, sizeof(sent));
     esp_ping_get_profile(hdl, ESP_PING_PROF_REPLY, &received, sizeof(received));
-
     esp_ping_delete_session(hdl);
-    vSemaphoreDelete(ctx.done);
 
     uint32_t avg_ms = received > 0 ? ctx.rtt_total_ms / received : 0;
 
     char resp[160];
     int n = snprintf(resp, sizeof(resp),
         "{\"ip\":\"%s\",\"sent\":%lu,\"received\":%lu,\"avg_ms\":%lu}",
-        ip, (unsigned long)sent, (unsigned long)received, (unsigned long)avg_ms);
+        job->ip, (unsigned long)sent, (unsigned long)received, (unsigned long)avg_ms);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, resp, n);
+
+cleanup:
+    if (ctx.done) vSemaphoreDelete(ctx.done);
+    httpd_req_async_handler_complete(req);
+    free(job);
+    s_ping_busy = false;
+    vTaskDelete(NULL);
+}
+
+static esp_err_t ping_handler(httpd_req_t *req)
+{
+    char query[64];
+    char ip[48];
+
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+        httpd_query_key_value(query, "ip", ip, sizeof(ip)) != ESP_OK) {
+        send_ping_error(req, "400 Bad Request", "missing ip param");
+        return ESP_OK;
+    }
+
+    struct in_addr in;
+    if (inet_aton(ip, &in) == 0) {
+        send_ping_error(req, "400 Bad Request", "invalid ip");
+        return ESP_OK;
+    }
+
+    if (!eth_get_netif()) {
+        send_ping_error(req, "503 Service Unavailable", "no ethernet");
+        return ESP_OK;
+    }
+
+    if (s_ping_busy) {
+        send_ping_error(req, "429 Too Many Requests", "ping in progress");
+        return ESP_OK;
+    }
+
+    ping_job_t *job = malloc(sizeof(*job));
+    if (!job) {
+        send_ping_error(req, "500 Internal Server Error", "out of memory");
+        return ESP_OK;
+    }
+    strlcpy(job->ip, ip, sizeof(job->ip));
+
+    // Detach the request so this worker is freed while the ping runs.
+    if (httpd_req_async_handler_begin(req, &job->req) != ESP_OK) {
+        free(job);
+        send_ping_error(req, "500 Internal Server Error", "async begin failed");
+        return ESP_OK;
+    }
+
+    s_ping_busy = true;
+    if (xTaskCreate(ping_async_task, "ping_job", 4096, job, 5, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create ping task");
+        httpd_req_async_handler_complete(job->req);
+        free(job);
+        s_ping_busy = false;
+    }
     return ESP_OK;
 }
 

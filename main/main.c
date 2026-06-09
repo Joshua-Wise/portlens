@@ -13,6 +13,7 @@
 #include "esp_heap_caps.h"
 
 #include "config.h"
+#include "proto_lock.h"
 #include "eth/eth_init.h"
 #include "protocols/lldp_parser.h"
 #include "protocols/cdp_parser.h"
@@ -101,6 +102,8 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+    proto_lock_init();
 
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(esp_netif_init());

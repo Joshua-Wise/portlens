@@ -1,4 +1,5 @@
 #include "dhcp_info.h"
+#include "proto_lock.h"
 #include "esp_netif.h"
 #include "esp_log.h"
 #include <string.h>
@@ -10,6 +11,7 @@ static dhcp_info_t s_dhcp_info;
 
 void dhcp_info_save(const esp_netif_ip_info_t *ip_info, esp_netif_t *netif)
 {
+    proto_lock();
     memset(&s_dhcp_info, 0, sizeof(s_dhcp_info));
 
     snprintf(s_dhcp_info.ip, sizeof(s_dhcp_info.ip), IPSTR, IP2STR(&ip_info->ip));
@@ -26,6 +28,7 @@ void dhcp_info_save(const esp_netif_ip_info_t *ip_info, esp_netif_t *netif)
     }
 
     s_dhcp_info.valid = true;
+    proto_unlock();
 
     ESP_LOGI(TAG, "DHCP lease: IP=%s Mask=%s GW=%s DNS=%s",
              s_dhcp_info.ip, s_dhcp_info.netmask,
@@ -39,7 +42,9 @@ const dhcp_info_t *dhcp_info_get(void)
 
 void dhcp_info_reset(void)
 {
+    proto_lock();
     memset(&s_dhcp_info, 0, sizeof(s_dhcp_info));
+    proto_unlock();
     ESP_LOGI(TAG, "DHCP info reset");
 }
 

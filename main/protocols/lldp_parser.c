@@ -1,4 +1,5 @@
 #include "lldp_parser.h"
+#include "proto_lock.h"
 #include "esp_log.h"
 #include <string.h>
 #include <stdio.h>
@@ -241,6 +242,8 @@ static void log_lldp_info(void)
 
 void lldp_parse(const uint8_t *data, uint32_t length)
 {
+    proto_lock();
+
     // Clear previous data on each new frame
     memset(&s_lldp_info, 0, sizeof(s_lldp_info));
 
@@ -313,6 +316,7 @@ void lldp_parse(const uint8_t *data, uint32_t length)
 
 done:
     s_lldp_info.received = true;
+    proto_unlock();
     log_lldp_info();
 }
 

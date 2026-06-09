@@ -1,4 +1,5 @@
 #include "protocols/eapol_detect.h"
+#include "proto_lock.h"
 #include "esp_log.h"
 #include <string.h>
 #include <stdio.h>
@@ -58,6 +59,7 @@ void eapol_process(const uint8_t *data, uint32_t length)
     ESP_LOGI(TAG, "EAPOL frame: ver=%u type=%u body_len=%u",
              eapol_version, eapol_type, body_len);
 
+    proto_lock();
     s_detected = true;
 
     if (eapol_type == EAPOL_TYPE_EAP_PACKET && body_len >= EAP_HDR_LEN &&
@@ -84,6 +86,7 @@ void eapol_process(const uint8_t *data, uint32_t length)
         // Non-EAP EAPOL packet (key exchange, etc.)
         snprintf(s_status, sizeof(s_status), "802.1X active");
     }
+    proto_unlock();
 }
 
 bool eapol_detected(void)
@@ -98,6 +101,8 @@ const char *eapol_get_status(void)
 
 void eapol_reset(void)
 {
+    proto_lock();
     s_detected = false;
     s_status[0] = '\0';
+    proto_unlock();
 }
