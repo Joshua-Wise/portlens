@@ -1,4 +1,5 @@
 #include "cdp_parser.h"
+#include "proto_lock.h"
 #include "esp_log.h"
 #include <string.h>
 #include <stdio.h>
@@ -132,6 +133,8 @@ void cdp_parse(const uint8_t *data, uint32_t length)
         return;
     }
 
+    proto_lock();
+
     // Clear previous data
     memset(&s_cdp_info, 0, sizeof(s_cdp_info));
 
@@ -199,6 +202,7 @@ void cdp_parse(const uint8_t *data, uint32_t length)
     }
 
     s_cdp_info.received = true;
+    proto_unlock();
     log_cdp_info();
 }
 
