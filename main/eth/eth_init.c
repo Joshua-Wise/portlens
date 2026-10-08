@@ -167,6 +167,14 @@ esp_err_t eth_init(void)
         esp_eth_update_input_path(s_eth_handle, raw_frame_recv, s_eth_netif),
         TAG, "Failed to set raw frame callback");
 
+    // LLDP (01:80:C2:00:00:0E), CDP (01:00:0C:CC:CC:CC) and EAPOL
+    // (01:80:C2:00:00:03) are all multicast. ESP-IDF <= 5.4 passed all
+    // multicast by default; 5.5+ filters it, so enable it explicitly.
+    bool all_multicast = true;
+    ESP_RETURN_ON_ERROR(
+        esp_eth_ioctl(s_eth_handle, ETH_CMD_S_ALL_MULTICAST, &all_multicast),
+        TAG, "Failed to enable all-multicast receive");
+
     // --- Start ---
     ESP_RETURN_ON_ERROR(esp_eth_start(s_eth_handle), TAG, "Ethernet start failed");
 

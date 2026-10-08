@@ -14,6 +14,7 @@
 #include "esp_lvgl_port.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_mac.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -36,6 +37,9 @@ static const char *TAG = "lvgl_ui";
 #define OVL_LINE_H      22
 #define OVL_BRAND_Y      6
 #define OVL_SUB_Y      104
+
+// Time each data page stays on screen before auto-cycling to the next
+#define PAGE_CYCLE_MS   10000
 
 // ---- Static UI handles ------------------------------------------------------
 
@@ -64,6 +68,7 @@ static lv_obj_t *s_val_dns2   = NULL;
 static lv_obj_t *s_val_wan    = NULL;
 static lv_obj_t *s_val_8021x  = NULL;
 static lv_obj_t *s_val_desc   = NULL;
+static lv_obj_t *s_val_mac    = NULL;
 
 // Auto-cycle timer (NULL = not running)
 static lv_timer_t *s_page_timer = NULL;
@@ -204,7 +209,7 @@ static const char *switch_name(const lldp_info_t *lldp, const cdp_info_t *cdp)
 
 static const char *port_name(const lldp_info_t *lldp, const cdp_info_t *cdp)
 {
-    if (lldp && lldp->port_id[0]) return lldp->port_id;
+    if (lldp && lldp_port_label(lldp)[0]) return lldp_port_label(lldp);
     if (cdp  && cdp->port_id[0])  return cdp->port_id;
     return "--";
 }
@@ -264,6 +269,16 @@ static void create_data2_screen(void)
     s_val_wan   = add_row(rows, "WAN");
     s_val_8021x = add_row(rows, "802.1X");
     s_val_desc  = add_row(rows, "Desc");
+    s_val_mac   = add_row(rows, "MAC");
+
+    // Our own Ethernet MAC never changes — fill it in once.
+    uint8_t mac[6];
+    if (esp_read_mac(mac, ESP_MAC_ETH) == ESP_OK) {
+        char buf[20];
+        snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        set_row(s_val_mac, "MAC", buf);
+    }
 }
 
 static void create_ui(void)
@@ -365,7 +380,7 @@ void lvgl_ui_show_data(const link_info_t *link)
     // Subsequent calls just update values without disrupting the current page.
     if (!s_page_timer) {
         if (s_scr_data) lv_screen_load(s_scr_data);
-        s_page_timer = lv_timer_create(page_cycle_cb, 5000, NULL);
+        s_page_timer = lv_timer_create(page_cycle_cb, PAGE_CYCLE_MS, NULL);
     }
 
     set_row(s_val_switch, "Switch", switch_name(lldp, cdp));
