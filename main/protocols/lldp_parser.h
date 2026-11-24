@@ -74,6 +74,9 @@ void lldp_parse(const uint8_t *data, uint32_t length);
  */
 const lldp_info_t *lldp_get_info(void);
 
+/** Forget the last LLDP neighbour (call on link down). */
+void lldp_reset(void);
+
 /**
  * Best human-readable port name for the display.
  *

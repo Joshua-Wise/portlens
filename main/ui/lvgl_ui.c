@@ -4,6 +4,7 @@
 
 #include "ui/lvgl_ui.h"
 #include "ui/tft_init.h"
+#include "proto_lock.h"
 #include "protocols/lldp_parser.h"
 #include "protocols/cdp_parser.h"
 #include "protocols/dhcp_info.h"
@@ -369,12 +370,16 @@ static const char *test_status_str(test_status_t s)
 
 void lvgl_ui_show_data(const link_info_t *link)
 {
-    const lldp_info_t *lldp = lldp_get_info();
-    const cdp_info_t  *cdp  = cdp_get_info();
-    const dhcp_info_t *dhcp = dhcp_info_get();
     char buf[64];
 
     lvgl_port_lock(0);
+
+    // Hold the protocol lock while reading so a frame arriving mid-refresh
+    // can't hand us a half-updated record.
+    proto_lock();
+    const lldp_info_t *lldp = lldp_get_info();
+    const cdp_info_t  *cdp  = cdp_get_info();
+    const dhcp_info_t *dhcp = dhcp_info_get();
 
     // On the first call, load page 1 and start the auto-cycle timer.
     // Subsequent calls just update values without disrupting the current page.
@@ -439,6 +444,7 @@ void lvgl_ui_show_data(const link_info_t *link)
     if (lldp && lldp->system_desc[0]) desc = lldp->system_desc;
     set_row(s_val_desc, "Desc", desc ? desc : "--");
 
+    proto_unlock();
     lvgl_port_unlock();
 }
 

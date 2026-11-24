@@ -17,6 +17,7 @@ static const char *TAG = "eth_init";
 
 static esp_eth_handle_t s_eth_handle = NULL;
 static esp_netif_t     *s_eth_netif  = NULL;
+static volatile bool    s_link_up    = false;
 
 static void eth_event_handler(void *arg, esp_event_base_t event_base,
                               int32_t event_id, void *event_data)
@@ -25,6 +26,7 @@ static void eth_event_handler(void *arg, esp_event_base_t event_base,
 
     switch (event_id) {
     case ETHERNET_EVENT_CONNECTED: {
+        s_link_up = true;
         uint8_t mac[6];
         esp_eth_ioctl(eth_handle, ETH_CMD_G_MAC_ADDR, mac);
         ESP_LOGI(TAG, "Link Up — MAC: %02X:%02X:%02X:%02X:%02X:%02X",
@@ -40,6 +42,7 @@ static void eth_event_handler(void *arg, esp_event_base_t event_base,
         break;
     }
     case ETHERNET_EVENT_DISCONNECTED:
+        s_link_up = false;
         ESP_LOGW(TAG, "Link Down");
         break;
     case ETHERNET_EVENT_START:
@@ -58,13 +61,14 @@ esp_err_t eth_init(void)
     ESP_LOGI(TAG, "Initializing Ethernet on %s", BOARD_NAME);
 
     // --- Detect WROOM vs WROVER module ---
-    // WROVER has PSRAM on GPIO 16/17 — those pins are NOT available externally.
-    // The RMII clock on GPIO 17 would go to PSRAM instead of the PHY!
-    // WROVER needs: ETH_CLK as external input on GPIO 0 (PHY crystal provides clock).
+    // WROVER has PSRAM on GPIO 16/17 — those pins are NOT available externally,
+    // so the RMII clock on GPIO 17 would go to PSRAM instead of the PHY.
+    // Olimex routes the PHY clock to GPIO 0 on WROVER boards instead; the ESP32
+    // still generates the 50 MHz clock, just on a different pin.
     bool is_wrover = esp_psram_is_initialized();
     if (is_wrover) {
         ESP_LOGW(TAG, "WROVER module detected (PSRAM present)!");
-        ESP_LOGW(TAG, "GPIO 16/17 are internal to PSRAM — using GPIO 0 for RMII clock input");
+        ESP_LOGW(TAG, "GPIO 16/17 are internal to PSRAM — using GPIO 0 for RMII clock output");
     } else {
         ESP_LOGI(TAG, "WROOM module (no PSRAM) — using GPIO 17 for RMII clock output");
     }
@@ -119,7 +123,7 @@ esp_err_t eth_init(void)
     }
 
     ESP_LOGI(TAG, "Installing driver (clock=%s, timeout=5000ms)...",
-             is_wrover ? "EXT_IN GPIO0" : "CLK_OUT GPIO17");
+             is_wrover ? "CLK_OUT GPIO0" : "CLK_OUT GPIO17");
     esp_eth_config_t eth_config = ETH_DEFAULT_CONFIG(mac, phy);
     esp_err_t install_err = esp_eth_driver_install(&eth_config, &s_eth_handle);
     if (install_err != ESP_OK) {
@@ -209,4 +213,9 @@ esp_eth_handle_t eth_get_handle(void)
 esp_netif_t *eth_get_netif(void)
 {
     return s_eth_netif;
+}
+
+bool eth_link_is_up(void)
+{
+    return s_link_up;
 }

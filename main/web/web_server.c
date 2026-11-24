@@ -252,7 +252,7 @@ static void collect_display(display_data_t *d)
     // Link info comes from the PHY (not the protocol structs) — no lock needed.
     esp_eth_handle_t eth = eth_get_handle();
     strcpy(d->link, "Down");
-    if (eth) {
+    if (eth && eth_link_is_up()) {
         eth_speed_t speed;
         eth_duplex_t duplex;
         esp_eth_ioctl(eth, ETH_CMD_G_SPEED, &speed);

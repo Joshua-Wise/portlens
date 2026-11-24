@@ -1,23 +1,24 @@
 #pragma once
 
 // ============================================================================
-// PortLens Board Configuration — Olimex ESP32-PoE-ISO (Rev.M1, WROOM variant)
-// PHY: LAN8710A (LAN8720-compatible), galvanic isolation, onboard PoE + LiPo
+// PortLens board configuration — Olimex ESP32-PoE-ISO
+// PHY: LAN8710A (LAN8720-compatible), galvanic isolation, onboard PoE + LiPo.
+// Both the WROOM and WROVER variants work: the RMII clock pin is chosen at
+// runtime in eth/eth_init.c.
 // ============================================================================
 
 // ============================================================================
 // Feature flags
 // ============================================================================
 #define FEATURE_DISPLAY     1   // 1.44" ST7735 128x128 TFT via LVGL
+#define FEATURE_WIFI_AP     1   // Open WiFi AP + captive-portal web interface
 #define FEATURE_DEMO_MODE   0   // Skip eth_init, inject fake LLDP/DHCP for UI iteration
 
 #define BOARD_NAME            "Olimex ESP32-PoE-ISO"
 #define ETH_PHY_ADDR          0
-#define ETH_PHY_RST_GPIO      -1  // No hardware reset pin
 #define ETH_PHY_PWR_GPIO      12  // PHY power enable (HIGH=ON: NPN Q2/Q3 invert before P-ch FET)
 #define ETH_MDC_GPIO          23
 #define ETH_MDIO_GPIO         18
-#define ETH_CLK_OUT_GPIO_NUM  17
 
 // 1.44" ST7735 128x128 SPI LCD (no touch, backlight tied to 3.3V)
 #define TFT_MOSI_GPIO        14

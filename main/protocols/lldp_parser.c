@@ -325,6 +325,13 @@ const lldp_info_t *lldp_get_info(void)
     return s_lldp_info.received ? &s_lldp_info : NULL;
 }
 
+void lldp_reset(void)
+{
+    proto_lock();
+    memset(&s_lldp_info, 0, sizeof(s_lldp_info));
+    proto_unlock();
+}
+
 static bool str_is_numeric(const char *s)
 {
     if (!*s) return false;

@@ -1,9 +1,7 @@
 #pragma once
 
+#include "config.h"
 #include "esp_err.h"
-#include <stdbool.h>
-
-#define FEATURE_WIFI_AP  1  // Enable WiFi AP + web interface
 
 #if FEATURE_WIFI_AP
 
