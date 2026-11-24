@@ -95,7 +95,7 @@ static void read_phy_info(link_info_t *link)
 void app_main(void)
 {
     ESP_LOGI(TAG, "=================================");
-    ESP_LOGI(TAG, " PortLens — Pocket Ethernet Tester");
+    ESP_LOGI(TAG, " PortLens — Network Tester");
     ESP_LOGI(TAG, " Board: %s", BOARD_NAME);
     ESP_LOGI(TAG, "=================================");
 

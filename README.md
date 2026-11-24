@@ -1,6 +1,6 @@
 # PortLens
 
-A pocket Ethernet tester you build yourself. Plug it into a wall jack and it shows which switch and port you're on, the VLAN, PoE, the DHCP lease, and whether the network works.
+A network tester you build yourself. Plug it into a wall jack and it shows which switch and port you're on, the VLAN, PoE, the DHCP lease, and whether the network works.
 
 It's an [Olimex ESP32-PoE-ISO](https://www.olimex.com/Products/IoT/ESP32/ESP32-POE-ISO/open-source-hardware) and a 1.44" display. On a PoE port it runs from the cable.
 
