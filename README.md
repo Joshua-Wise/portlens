@@ -27,7 +27,7 @@ The display alternates between two pages every 10 seconds. The full record is on
 | [Olimex ESP32-PoE-ISO](https://www.olimex.com/Products/IoT/ESP32/ESP32-POE-ISO/open-source-hardware) | WROOM and WROVER versions both work. [Schematics](https://github.com/OLIMEX/ESP32-POE-ISO). |
 | 1.44" ST7735 SPI display, 128×128 | Generic 8-pin module. Search [Amazon](https://www.amazon.com/s?k=1.44+inch+TFT+ST7735+128x128+SPI) or [AliExpress](https://www.aliexpress.com/w/wholesale-1.44-tft-st7735-128x128-spi.html). |
 | 8 jumper wires, USB cable | USB is only needed for flashing. |
-| 3D-printed enclosure | Coming soon, in [`enclosure/`](enclosure/). |
+| 3D-printed enclosure | Optional. STEP file in [`enclosure/`](enclosure/). |
 
 ## Wiring
 
