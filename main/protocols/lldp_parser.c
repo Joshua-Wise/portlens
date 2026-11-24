@@ -325,6 +325,36 @@ const lldp_info_t *lldp_get_info(void)
     return s_lldp_info.received ? &s_lldp_info : NULL;
 }
 
+void lldp_reset(void)
+{
+    proto_lock();
+    memset(&s_lldp_info, 0, sizeof(s_lldp_info));
+    proto_unlock();
+}
+
+static bool str_is_numeric(const char *s)
+{
+    if (!*s) return false;
+    for (; *s; s++) {
+        if (*s < '0' || *s > '9') return false;
+    }
+    return true;
+}
+
+bool lldp_port_label_is_desc(const lldp_info_t *info)
+{
+    if (!info || !info->port_desc[0]) return false;
+    if (!info->port_id[0]) return true;
+    return info->port_id_subtype == LLDP_PORT_LOCAL ||
+           str_is_numeric(info->port_id);
+}
+
+const char *lldp_port_label(const lldp_info_t *info)
+{
+    if (!info) return "";
+    return lldp_port_label_is_desc(info) ? info->port_desc : info->port_id;
+}
+
 #if FEATURE_DEMO_MODE
 void lldp_info_set_demo(void)
 {

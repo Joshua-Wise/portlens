@@ -173,7 +173,17 @@ static void collect_display(display_data_t *d)
 
     if (lldp) {
         if (lldp->system_name[0]) sw = lldp->system_name;
-        if (lldp->port_id[0]) port = lldp->port_id;
+        if (lldp_port_label_is_desc(lldp) && lldp->port_id[0] &&
+            strcmp(lldp->port_desc, lldp->port_id) != 0) {
+            // e.g. HPE 5400: "E22 (127)" — port name plus the raw ifIndex
+            strlcpy(d->port, lldp->port_desc, sizeof(d->port));
+            strlcat(d->port, " (", sizeof(d->port));
+            strlcat(d->port, lldp->port_id, sizeof(d->port));
+            strlcat(d->port, ")", sizeof(d->port));
+            port = d->port;
+        } else if (lldp_port_label(lldp)[0]) {
+            port = lldp_port_label(lldp);
+        }
         if (lldp->system_desc[0]) strlcpy(d->platform, lldp->system_desc, sizeof(d->platform));
         if (lldp->port_desc[0]) strlcpy(d->port_desc, lldp->port_desc, sizeof(d->port_desc));
         strcpy(d->proto, "LLDP");
@@ -212,7 +222,7 @@ static void collect_display(display_data_t *d)
         }
     }
     strlcpy(d->sw, sw, sizeof(d->sw));
-    strlcpy(d->port, port, sizeof(d->port));
+    if (port != d->port) strlcpy(d->port, port, sizeof(d->port));
 
     if (dhcp) {
         strlcpy(d->ip, dhcp->ip, sizeof(d->ip));
@@ -242,7 +252,7 @@ static void collect_display(display_data_t *d)
     // Link info comes from the PHY (not the protocol structs) — no lock needed.
     esp_eth_handle_t eth = eth_get_handle();
     strcpy(d->link, "Down");
-    if (eth) {
+    if (eth && eth_link_is_up()) {
         eth_speed_t speed;
         eth_duplex_t duplex;
         esp_eth_ioctl(eth, ETH_CMD_G_SPEED, &speed);

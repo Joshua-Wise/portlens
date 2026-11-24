@@ -39,3 +39,6 @@ void cdp_parse(const uint8_t *data, uint32_t length);
  * Returns NULL if no CDP frame has been received yet.
  */
 const cdp_info_t *cdp_get_info(void);
+
+/** Forget the last CDP neighbour (call on link down). */
+void cdp_reset(void);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include "esp_eth.h"
 #include "esp_netif.h"
 
@@ -22,3 +23,6 @@ esp_eth_handle_t eth_get_handle(void);
  * Returns NULL if eth_init() hasn't been called yet.
  */
 esp_netif_t *eth_get_netif(void);
+
+/** True while the Ethernet link is up. */
+bool eth_link_is_up(void);

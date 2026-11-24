@@ -74,6 +74,23 @@ void lldp_parse(const uint8_t *data, uint32_t length);
  */
 const lldp_info_t *lldp_get_info(void);
 
+/** Forget the last LLDP neighbour (call on link down). */
+void lldp_reset(void);
+
+/**
+ * Best human-readable port name for the display.
+ *
+ * Some switches (HPE/Aruba ProCurve 5400/3800/2930 etc.) send the Port ID as
+ * a locally-assigned ifIndex number (e.g. "127") and carry the real port name
+ * ("E22") in the Port Description TLV. When the Port ID is locally assigned
+ * or purely numeric and a Port Description exists, return the description;
+ * otherwise return the Port ID. Never returns NULL (may return "").
+ */
+const char *lldp_port_label(const lldp_info_t *info);
+
+/** True when lldp_port_label() substituted Port Description for Port ID. */
+bool lldp_port_label_is_desc(const lldp_info_t *info);
+
 #include "config.h"
 #if FEATURE_DEMO_MODE
 /** Inject fake LLDP info for demo / UI iteration. */

@@ -210,3 +210,10 @@ const cdp_info_t *cdp_get_info(void)
 {
     return s_cdp_info.received ? &s_cdp_info : NULL;
 }
+
+void cdp_reset(void)
+{
+    proto_lock();
+    memset(&s_cdp_info, 0, sizeof(s_cdp_info));
+    proto_unlock();
+}

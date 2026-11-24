@@ -22,9 +22,7 @@
 #include "tests/connectivity.h"
 #include "web/web_server.h"
 
-#if FEATURE_DISPLAY
 #include "ui/lvgl_ui.h"
-#endif
 
 static const char *TAG = "portlens";
 
@@ -46,6 +44,11 @@ static void app_eth_event_handler(void *arg, esp_event_base_t event_base,
         break;
     case ETHERNET_EVENT_DISCONNECTED:
         s_state = STATE_WAIT_FOR_LINK;
+        // Everything learned belongs to the port we just left. Without this the
+        // previous switch/port would be shown on the next jack until its first
+        // LLDP/CDP frame arrives (up to 30-60 s).
+        lldp_reset();
+        cdp_reset();
         dhcp_info_reset();
         connectivity_reset();
         eapol_reset();

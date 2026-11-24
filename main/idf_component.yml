@@ -1,3 +1,5 @@
+# Exact versions on purpose: these are the ones the firmware is tested against.
+# (A range here lets a fresh clone pick up a newer LVGL than the UI was written for.)
 dependencies:
-  espressif/esp_lvgl_port: "^2.6"
-  lvgl/lvgl: ">=9.2.0,<9.3.0"
+  espressif/esp_lvgl_port: "2.7.2"
+  lvgl/lvgl: "9.2.2"
