@@ -1,10 +1,14 @@
 # PortLens sdkconfig defaults
-# Target: ESP32 with LAN8720 RMII Ethernet
+# Target: ESP32 (Olimex ESP32-PoE-ISO) with LAN8710A RMII Ethernet
+#
+# This file is the whole project configuration: `sdkconfig` itself is generated
+# from it on the first build and is not tracked. After changing options with
+# `idf.py menuconfig`, run `idf.py save-defconfig` and merge the result here.
 
 # Ethernet — ESP32 internal EMAC with RMII
 # Clock configuration is set at runtime based on module type (WROOM vs WROVER).
 # WROOM: ESP32 outputs 50 MHz on GPIO 17 → PHY REF_CLK
-# WROVER: GPIO 17 is internal to PSRAM; PHY crystal → GPIO 0 → ESP32
+# WROVER: GPIO 17 is internal to PSRAM; ESP32 outputs 50 MHz on GPIO 0 instead
 # We default to CLK_OUTPUT for sdkconfig, but override in code for WROVER.
 CONFIG_ETH_USE_ESP32_EMAC=y
 CONFIG_ETH_PHY_INTERFACE_RMII=y
@@ -21,12 +25,23 @@ CONFIG_SPIRAM_IGNORE_NOTFOUND=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
+# Code size — the app has to fit the 1.5 MB factory partition
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT=y
+CONFIG_COMPILER_OPTIMIZATION_CHECKS_SILENT=y
+CONFIG_COMPILER_ORPHAN_SECTIONS_PLACE=y
+CONFIG_LIBC_NEWLIB_NANO_FORMAT=y
+
 # Log level — INFO for normal operation, DEBUG for development
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_LOG_DEFAULT_LEVEL=3
+CONFIG_LOG_COLORS=y
 
 # FreeRTOS tick rate
 CONFIG_FREERTOS_HZ=1000
+
+# Lets the connectivity task put its stack in PSRAM (xTaskCreateWithCaps)
+CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM=y
 
 # Main task stack size (we do protocol parsing on main task context)
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
@@ -34,10 +49,38 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 # Event loop
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
 
-# LVGL fonts — enable monospace UNSCII fonts for terminal UI
+# Task watchdog — don't watch the idle tasks
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
+
+# WiFi — only an open soft-AP is used
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER=y
+CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT=n
+
+# Networking — IPv4 only
+CONFIG_LWIP_IPV6=n
+
+# mbedTLS — trimmed to save flash (pulled in by esp_http_client)
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_CMN=y
+CONFIG_MBEDTLS_ECP_DP_SECP192R1_ENABLED=n
+CONFIG_MBEDTLS_ECP_DP_SECP224R1_ENABLED=n
+CONFIG_MBEDTLS_ECP_DP_SECP521R1_ENABLED=n
+CONFIG_MBEDTLS_ECP_DP_SECP192K1_ENABLED=n
+CONFIG_MBEDTLS_ECP_DP_SECP224K1_ENABLED=n
+CONFIG_MBEDTLS_ECP_DP_SECP256K1_ENABLED=n
+CONFIG_MBEDTLS_ECP_DP_BP256R1_ENABLED=n
+CONFIG_MBEDTLS_ECP_DP_BP384R1_ENABLED=n
+CONFIG_MBEDTLS_ECP_DP_BP512R1_ENABLED=n
+CONFIG_MBEDTLS_ECP_FIXED_POINT_OPTIM=y
+
+# LVGL fonts — the display UI uses Montserrat 10/12/16
+CONFIG_LV_FONT_MONTSERRAT_10=y
+CONFIG_LV_FONT_MONTSERRAT_12=y
+CONFIG_LV_FONT_MONTSERRAT_16=y
+CONFIG_LV_FONT_MONTSERRAT_18=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
 CONFIG_LV_FONT_UNSCII_8=y
 CONFIG_LV_FONT_UNSCII_16=y
-CONFIG_LV_FONT_MONTSERRAT_10=y
 
 # HTTP server — phones send huge headers for captive portal detection.
 # Default 512 is not enough; bump req header buffer + URI buffer so we
