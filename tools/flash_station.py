@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """PortLens flash station — plug boards in, they get flashed.
 
 Watches for USB-serial adapters (CH340 on the Olimex ESP32-PoE-ISO). Every

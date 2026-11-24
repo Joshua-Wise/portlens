@@ -2,9 +2,9 @@
 # Copy freshly-built firmware binaries into the GitHub Pages flasher.
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BUILD="$SCRIPT_DIR/build"
-DEST="$SCRIPT_DIR/docs/firmware"
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+BUILD="$REPO/build"
+DEST="$REPO/docs/firmware"
 
 if [ ! -f "$BUILD/portlens.bin" ]; then
   echo "error: build/portlens.bin not found — run 'idf.py build' first" >&2
